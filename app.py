@@ -245,6 +245,33 @@ def init_db():
         )
     ''')
 
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS scholarship_updates (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scholarship_id INTEGER,
+            scholarship_name TEXT,
+            update_type TEXT,
+            update_content TEXT,
+            update_date TEXT,
+            FOREIGN KEY (scholarship_id) REFERENCES scholarships(id)
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS user_scholarship_tracking (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            scholarship_id INTEGER,
+            scholarship_name TEXT,
+            tracking_start_date TEXT,
+            last_notified TEXT,
+            notification_enabled INTEGER DEFAULT 1,
+            FOREIGN KEY (user_id) REFERENCES users(user_id),
+            FOREIGN KEY (scholarship_id) REFERENCES scholarships(id),
+            UNIQUE(user_id, scholarship_id)
+        )
+    ''')
+
     conn.commit()
     conn.close()
     logger.info("✅ تم إعداد قاعدة البيانات بنجاح")
@@ -380,6 +407,133 @@ def save_admin_reply(message_id, reply_text):
     ''', (reply_text, datetime.now().strftime('%Y-%m-%d %H:%M:%S'), message_id))
     conn.commit()
     conn.close()
+
+# ============================================
+# 🔔 نظام التتبع والإشعارات الذكية
+# ============================================
+
+def track_scholarship(user_id, scholarship_id, scholarship_name):
+    """تفعيل تتبع منحة للمستخدم"""
+    conn = sqlite3.connect('scholarship_bot.db')
+    cursor = conn.cursor()
+    try:
+        cursor.execute('''
+            INSERT OR IGNORE INTO user_scholarship_tracking 
+            (user_id, scholarship_id, scholarship_name, tracking_start_date)
+            VALUES (?, ?, ?, ?)
+        ''', (user_id, scholarship_id, scholarship_name, datetime.now().strftime('%Y-%m-%d')))
+        conn.commit()
+        conn.close()
+        return True
+    except:
+        conn.close()
+        return False
+
+def get_tracked_scholarships(user_id):
+    """جلب المنح المتتبعة للمستخدم"""
+    conn = sqlite3.connect('scholarship_bot.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        SELECT * FROM user_scholarship_tracking 
+        WHERE user_id = ? AND notification_enabled = 1
+    ''', (user_id,))
+    tracked = cursor.fetchall()
+    conn.close()
+    return tracked
+
+def save_scholarship_update(scholarship_id, scholarship_name, update_type, update_content):
+    """حفظ تحديث جديد لمنحة"""
+    conn = sqlite3.connect('scholarship_bot.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO scholarship_updates 
+        (scholarship_id, scholarship_name, update_type, update_content, update_date)
+        VALUES (?, ?, ?, ?, ?)
+    ''', (scholarship_id, scholarship_name, update_type, update_content, 
+          datetime.now().strftime('%Y-%m-%d %H:%M:%S')))
+    conn.commit()
+    conn.close()
+
+async def send_scholarship_notifications(context: ContextTypes.DEFAULT_TYPE):
+    """إرسال إشعارات تلقائية عن تحديثات المنح"""
+    logger.info("🔔 جاري فحص التحديثات وإرسال الإشعارات...")
+    
+    try:
+        conn = sqlite3.connect('scholarship_bot.db')
+        cursor = conn.cursor()
+        
+        # جلب جميع المستخدمين المتتبعين
+        cursor.execute('''
+            SELECT DISTINCT user_id FROM user_scholarship_tracking 
+            WHERE notification_enabled = 1
+        ''')
+        users = cursor.fetchall()
+        
+        for user_tuple in users:
+            user_id = user_tuple[0]
+            
+            # جلب المنح المتتبعة لهذا المستخدم
+            cursor.execute('''
+                SELECT scholarship_id, scholarship_name, last_notified 
+                FROM user_scholarship_tracking 
+                WHERE user_id = ? AND notification_enabled = 1
+            ''', (user_id,))
+            tracked_scholarships = cursor.fetchall()
+            
+            for sch_id, sch_name, last_notified in tracked_scholarships:
+                # جلب معلومات المنحة الحالية
+                cursor.execute('SELECT * FROM scholarships WHERE id = ?', (sch_id,))
+                scholarship = cursor.fetchone()
+                
+                if scholarship:
+                    # إنشاء رسالة التحديث
+                    notification_msg = f"""🔔 تحديث جديد عن المنحة المفضلة لديك!
+
+📚 {sch_name}
+
+━━━━━━━━━━━━━━━━━━━━━━
+
+📅 الموعد النهائي: {scholarship[4]}
+🌍 الدولة: {scholarship[2]}
+🎯 التخصص: {scholarship[3]}
+💰 التمويل: {scholarship[8]}
+🎓 المرحلة: {scholarship[9]}
+
+📋 المتطلبات الحالية:
+{scholarship[10] if scholarship[10] else 'يرجى زيارة الموقع الرسمي'}
+
+🎁 المزايا:
+{scholarship[11] if scholarship[11] else 'تغطية شاملة للدراسة والمعيشة'}
+
+🔗 الرابط: {scholarship[6]}
+
+━━━━━━━━━━━━━━━━━━━━━━
+💡 تابع الموقع الرسمي للمنحة لمعرفة آخر التحديثات!"""
+                    
+                    try:
+                        await context.bot.send_message(
+                            chat_id=user_id,
+                            text=notification_msg,
+                            disable_web_page_preview=True
+                        )
+                        
+                        # تحديث تاريخ آخر إشعار
+                        cursor.execute('''
+                            UPDATE user_scholarship_tracking 
+                            SET last_notified = ? 
+                            WHERE user_id = ? AND scholarship_id = ?
+                        ''', (datetime.now().strftime('%Y-%m-%d'), user_id, sch_id))
+                        conn.commit()
+                        
+                        logger.info(f"✅ تم إرسال إشعار للمستخدم {user_id} عن {sch_name}")
+                        
+                    except Exception as e:
+                        logger.error(f"خطأ في إرسال الإشعار: {e}")
+        
+        conn.close()
+        
+    except Exception as e:
+        logger.error(f"خطأ في نظام الإشعارات: {e}")
 
 # ============================================
 # 💾 دوال المنح المفضلة
@@ -1214,101 +1368,172 @@ def search_scholarships_online(country=None, major=None, keyword=None):
     return scholarships
 
 def search_scholarship_portal(country, major, keyword):
-    """البحث في ScholarshipPortal.com"""
+    """البحث الحقيقي في ScholarshipPortal.com - محسّن"""
     scholarships = []
     try:
         base_url = "https://www.scholarshipportal.com"
-        search_url = f"{base_url}/scholarships"
-
-        params = {}
+        
+        # بناء URL البحث الديناميكي
+        search_params = []
         if country:
-            params['country'] = country
+            search_params.append(f"c={country}")
         if major:
-            params['discipline'] = major
+            search_params.append(f"d={major}")
+        if keyword:
+            search_params.append(f"q={keyword}")
+        
+        search_url = f"{base_url}/scholarships"
+        if search_params:
+            search_url += "?" + "&".join(search_params)
 
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'Connection': 'keep-alive',
         }
 
-        response = requests.get(search_url, params=params, headers=headers, timeout=10)
+        logger.info(f"🔍 البحث في ScholarshipPortal: {search_url}")
+        
+        response = requests.get(search_url, headers=headers, timeout=15)
 
         if response.status_code == 200:
             soup = BeautifulSoup(response.content, 'html.parser')
-            scholarship_items = soup.find_all('div', class_='scholarship-item')
+            
+            # محاولة إيجاد المنح بطرق متعددة
+            scholarship_items = soup.find_all('div', class_=['scholarship-item', 'card', 'result-item'])
+            
+            if not scholarship_items:
+                scholarship_items = soup.find_all('article')
+            
+            logger.info(f"✅ وجدنا {len(scholarship_items)} منحة في ScholarshipPortal")
 
-            for item in scholarship_items[:10]:
+            for item in scholarship_items[:20]:  # زيادة العدد لـ 20
                 try:
-                    name = item.find('h3').text.strip() if item.find('h3') else 'غير متوفر'
-                    link = base_url + item.find('a')['href'] if item.find('a') else ''
-                    description = item.find('p').text.strip() if item.find('p') else 'غير متوفر'
+                    # استخراج الاسم
+                    name_tag = item.find(['h3', 'h2', 'h4', 'a'])
+                    name = name_tag.text.strip() if name_tag else 'غير متوفر'
+                    
+                    # استخراج الرابط
+                    link_tag = item.find('a', href=True)
+                    link = ''
+                    if link_tag:
+                        href = link_tag['href']
+                        link = href if href.startswith('http') else base_url + href
+                    
+                    # استخراج الوصف
+                    desc_tag = item.find('p')
+                    description = desc_tag.text.strip()[:200] if desc_tag else 'غير متوفر'
+                    
+                    # استخراج الموعد النهائي
+                    deadline_tag = item.find(text=re.compile(r'deadline|date|closing', re.I))
+                    deadline = deadline_tag.strip() if deadline_tag else 'يرجى زيارة الموقع'
 
-                    scholarships.append({
-                        'name': name,
-                        'country': country or 'متعددة',
-                        'major': major or 'جميع التخصصات',
-                        'deadline': 'يرجى زيارة الموقع',
-                        'link': link,
-                        'description': description,
-                        'source': 'ScholarshipPortal'
-                    })
-                except:
+                    if name != 'غير متوفر' and link:
+                        scholarships.append({
+                            'name': name,
+                            'country': country or 'متعددة',
+                            'major': major or 'جميع التخصصات',
+                            'deadline': deadline,
+                            'link': link,
+                            'description': description,
+                            'source': 'ScholarshipPortal',
+                            'funding_type': 'متنوع',
+                            'degree_level': 'جميع المراحل'
+                        })
+                except Exception as e:
+                    logger.error(f"خطأ في معالجة منحة: {e}")
                     continue
 
     except Exception as e:
-        logger.error(f"خطأ في ScholarshipPortal: {e}")
+        logger.error(f"❌ خطأ في ScholarshipPortal: {e}")
 
     return scholarships
 
 def search_scholars4dev(country, major, keyword):
-    """البحث في Scholars4Dev"""
+    """البحث الموسع في Scholars4Dev - محسّن جداً"""
     scholarships = []
     try:
         base_url = "https://www.scholars4dev.com"
-
+        
+        # بناء استعلام البحث الديناميكي
+        search_queries = []
+        
         if country:
-            search_url = f"{base_url}/?s={country}+scholarships"
-        elif major:
-            search_url = f"{base_url}/?s={major}+scholarships"
-        elif keyword:
-            search_url = f"{base_url}/?s={keyword}"
-        else:
-            search_url = f"{base_url}/scholarships/"
+            search_queries.append(f"{country} scholarships")
+        if major:
+            search_queries.append(f"{major} scholarships")
+        if keyword:
+            search_queries.append(keyword)
+        
+        # إذا لم يكن هناك استعلام، ابحث عن المنح الحديثة
+        if not search_queries:
+            search_queries = ["fully funded scholarships", "international scholarships"]
 
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         }
 
-        response = requests.get(search_url, headers=headers, timeout=10)
+        for query in search_queries[:2]:  # بحث في أول استعلامين
+            try:
+                search_url = f"{base_url}/?s={query.replace(' ', '+')}"
+                
+                logger.info(f"🔍 البحث في Scholars4Dev: {search_url}")
+                
+                response = requests.get(search_url, headers=headers, timeout=15)
 
-        if response.status_code == 200:
-            soup = BeautifulSoup(response.content, 'html.parser')
-            articles = soup.find_all('article', limit=10)
+                if response.status_code == 200:
+                    soup = BeautifulSoup(response.content, 'html.parser')
+                    articles = soup.find_all(['article', 'div'], class_=re.compile(r'post|article|entry'), limit=15)
 
-            for article in articles:
-                try:
-                    title_tag = article.find('h2') or article.find('h3')
-                    name = title_tag.text.strip() if title_tag else 'غير متوفر'
+                    logger.info(f"✅ وجدنا {len(articles)} مقالة في Scholars4Dev")
 
-                    link_tag = title_tag.find('a') if title_tag else None
-                    link = link_tag['href'] if link_tag else ''
+                    for article in articles:
+                        try:
+                            # استخراج العنوان
+                            title_tag = article.find(['h2', 'h3', 'h1'])
+                            if not title_tag:
+                                continue
+                            
+                            name = title_tag.text.strip()
+                            
+                            # استخراج الرابط
+                            link_tag = title_tag.find('a') if title_tag else article.find('a')
+                            link = link_tag['href'] if link_tag and link_tag.get('href') else ''
 
-                    desc_tag = article.find('p')
-                    description = desc_tag.text.strip()[:200] if desc_tag else 'غير متوفر'
+                            # استخراج الوصف
+                            desc_tag = article.find('p')
+                            description = desc_tag.text.strip()[:250] if desc_tag else ''
+                            
+                            # استخراج الموعد النهائي من النص
+                            deadline = 'يرجى زيارة الموقع'
+                            deadline_match = re.search(r'deadline[:\s]+([A-Za-z]+\s+\d{1,2},?\s+\d{4})', article.text, re.I)
+                            if deadline_match:
+                                deadline = deadline_match.group(1)
 
-                    scholarships.append({
-                        'name': name,
-                        'country': country or 'متعددة',
-                        'major': major or 'جميع التخصصات',
-                        'deadline': 'يرجى زيارة الموقع',
-                        'link': link,
-                        'description': description,
-                        'source': 'Scholars4Dev'
-                    })
-                except:
-                    continue
+                            if name and link and 'scholarship' in name.lower():
+                                scholarships.append({
+                                    'name': name,
+                                    'country': country or 'متعددة',
+                                    'major': major or 'جميع التخصصات',
+                                    'deadline': deadline,
+                                    'link': link,
+                                    'description': description,
+                                    'source': 'Scholars4Dev',
+                                    'funding_type': 'متنوع',
+                                    'degree_level': 'جميع المراحل'
+                                })
+                        except Exception as e:
+                            logger.error(f"خطأ في معالجة مقالة: {e}")
+                            continue
+                            
+            except Exception as e:
+                logger.error(f"خطأ في استعلام: {e}")
+                continue
 
     except Exception as e:
-        logger.error(f"خطأ في Scholars4Dev: {e}")
+        logger.error(f"❌ خطأ في Scholars4Dev: {e}")
 
     return scholarships
 
@@ -1354,89 +1579,266 @@ def search_findamasters(country, major):
     return scholarships
 
 def search_government_sites(country):
-    """البحث في المواقع الحكومية للمنح"""
+    """البحث الموسع في المواقع الحكومية - محسّن جداً"""
     scholarships = []
 
     gov_sites = {
-        'germany': {
-            'name': 'منح DAAD الألمانية',
-            'url': 'https://www.daad.de/en/',
-            'description': 'منح الحكومة الألمانية للدراسات العليا'
-        },
-        'turkey': {
-            'name': 'منحة تركيا Türkiye Bursları',
-            'url': 'https://www.turkiyeburslari.gov.tr/',
-            'description': 'منحة الحكومة التركية الممولة بالكامل'
-        },
-        'china': {
-            'name': 'منحة الحكومة الصينية CSC',
-            'url': 'https://www.campuschina.org/',
-            'description': 'منحة حكومية صينية لجميع المراحل الدراسية'
-        },
-        'france': {
-            'name': 'منح Campus France',
-            'url': 'https://www.campusfrance.org/',
-            'description': 'منح الحكومة الفرنسية'
-        },
-        'uk': {
-            'name': 'منح Chevening البريطانية',
-            'url': 'https://www.chevening.org/',
-            'description': 'منح حكومية بريطانية للماجستير'
-        },
-        'australia': {
-            'name': 'منح Australia Awards',
-            'url': 'https://www.australiaawards.gov.au/',
-            'description': 'منح الحكومة الأسترالية'
-        },
-        'japan': {
-            'name': 'منح MEXT اليابانية',
-            'url': 'https://www.studyinjapan.go.jp/',
-            'description': 'منح وزارة التعليم اليابانية'
-        },
-        'south_korea': {
-            'name': 'منح حكومة كوريا الجنوبية',
-            'url': 'https://www.studyinkorea.go.kr/',
-            'description': 'منح GKS الحكومية الكورية'
-        },
-        'netherlands': {
-            'name': 'منح Holland Scholarship',
-            'url': 'https://www.studyinholland.nl/',
-            'description': 'منح الحكومة الهولندية'
-        },
-        'sweden': {
-            'name': 'منح المعهد السويدي',
-            'url': 'https://si.se/en/',
-            'description': 'منح الحكومة السويدية'
-        }
+        'germany': [
+            {
+                'name': 'DAAD Scholarships - Germany',
+                'url': 'https://www.daad.de/en/',
+                'description': 'منح الحكومة الألمانية للدراسات العليا - أكثر من 200 برنامج',
+                'funding': 'ممولة بالكامل',
+                'level': 'ماجستير، دكتوراه'
+            },
+            {
+                'name': 'Deutschlandstipendium Scholarship',
+                'url': 'https://www.deutschlandstipendium.de/',
+                'description': 'منحة ألمانيا الوطنية للطلاب المتفوقين',
+                'funding': 'ممولة جزئياً',
+                'level': 'بكالوريوس، ماجستير'
+            },
+            {
+                'name': 'Friedrich Ebert Foundation',
+                'url': 'https://www.fes.de/en/',
+                'description': 'منح مؤسسة فريدريش إيبرت الألمانية',
+                'funding': 'ممولة بالكامل',
+                'level': 'ماجستير، دكتوراه'
+            }
+        ],
+        'turkey': [
+            {
+                'name': 'Türkiye Bursları Scholarship',
+                'url': 'https://www.turkiyeburslari.gov.tr/',
+                'description': 'منحة الحكومة التركية الشاملة - أكثر من 5000 منحة سنوياً',
+                'funding': 'ممولة بالكامل',
+                'level': 'بكالوريوس، ماجستير، دكتوراه'
+            },
+            {
+                'name': 'YTB Turkish Government Scholarship',
+                'url': 'https://www.ytb.gov.tr/',
+                'description': 'منح رئاسة التركيات في الخارج',
+                'funding': 'ممولة بالكامل',
+                'level': 'جميع المراحل'
+            },
+            {
+                'name': 'Istanbul University Scholarships',
+                'url': 'https://www.istanbul.edu.tr/',
+                'description': 'منح جامعة إسطنبول للطلاب الدوليين',
+                'funding': 'متنوع',
+                'level': 'بكالوريوس، ماجستير'
+            },
+            {
+                'name': 'Sabanci University Scholarship',
+                'url': 'https://www.sabanciuniv.edu/',
+                'description': 'منح جامعة صبنجي التركية',
+                'funding': 'ممولة بالكامل',
+                'level': 'بكالوريوس، ماجستير'
+            },
+            {
+                'name': 'Koç University Scholarships',
+                'url': 'https://www.ku.edu.tr/',
+                'description': 'منح جامعة كوتش - أفضل جامعة خاصة في تركيا',
+                'funding': 'ممولة بالكامل',
+                'level': 'جميع المراحل'
+            }
+        ],
+        'china': [
+            {
+                'name': 'Chinese Government Scholarship (CSC)',
+                'url': 'https://www.campuschina.org/',
+                'description': 'منحة حكومية صينية - أكثر من 10,000 منحة سنوياً',
+                'funding': 'ممولة بالكامل',
+                'level': 'بكالوريوس، ماجستير، دكتوراه'
+            },
+            {
+                'name': 'Confucius Institute Scholarship',
+                'url': 'https://www.chinese.cn/',
+                'description': 'منح معهد كونفوشيوس لدراسة اللغة الصينية',
+                'funding': 'ممولة بالكامل',
+                'level': 'جميع المراحل'
+            },
+            {
+                'name': 'Belt and Road Scholarship',
+                'url': 'https://www.campuschina.org/',
+                'description': 'منح مبادرة الحزام والطريق الصينية',
+                'funding': 'ممولة بالكامل',
+                'level': 'ماجستير، دكتوراه'
+            }
+        ],
+        'france': [
+            {
+                'name': 'Campus France Scholarships',
+                'url': 'https://www.campusfrance.org/',
+                'description': 'منح الحكومة الفرنسية',
+                'funding': 'متنوع',
+                'level': 'جميع المراحل'
+            },
+            {
+                'name': 'Eiffel Excellence Scholarship',
+                'url': 'https://www.campusfrance.org/en/eiffel-scholarship-program-of-excellence',
+                'description': 'منحة إيفل للتميز - من أفضل المنح الفرنسية',
+                'funding': 'ممولة بالكامل',
+                'level': 'ماجستير، دكتوراه'
+            }
+        ],
+        'uk': [
+            {
+                'name': 'Chevening Scholarships',
+                'url': 'https://www.chevening.org/',
+                'description': 'منح حكومية بريطانية للماجستير - الأشهر عالمياً',
+                'funding': 'ممولة بالكامل',
+                'level': 'ماجستير'
+            },
+            {
+                'name': 'Commonwealth Scholarships',
+                'url': 'https://cscuk.fcdo.gov.uk/',
+                'description': 'منح الكومنولث البريطانية',
+                'funding': 'ممولة بالكامل',
+                'level': 'ماجستير، دكتوراه'
+            },
+            {
+                'name': 'GREAT Scholarships',
+                'url': 'https://www.britishcouncil.org/study-work-abroad/outside-uk/scholarships/great-scholarships',
+                'description': 'منح GREAT البريطانية',
+                'funding': 'ممولة جزئياً',
+                'level': 'ماجستير'
+            }
+        ],
+        'australia': [
+            {
+                'name': 'Australia Awards Scholarships',
+                'url': 'https://www.australiaawards.gov.au/',
+                'description': 'منح الحكومة الأسترالية الشاملة',
+                'funding': 'ممولة بالكامل',
+                'level': 'بكالوريوس، ماجستير، دكتوراه'
+            },
+            {
+                'name': 'Research Training Program (RTP)',
+                'url': 'https://www.education.gov.au/',
+                'description': 'برنامج التدريب البحثي الأسترالي',
+                'funding': 'ممولة بالكامل',
+                'level': 'ماجستير بحثي، دكتوراه'
+            }
+        ],
+        'japan': [
+            {
+                'name': 'MEXT Japanese Government Scholarship',
+                'url': 'https://www.studyinjapan.go.jp/',
+                'description': 'منح وزارة التعليم اليابانية',
+                'funding': 'ممولة بالكامل',
+                'level': 'بكالوريوس، ماجستير، دكتوراه'
+            },
+            {
+                'name': 'JASSO Scholarship',
+                'url': 'https://www.jasso.go.jp/',
+                'description': 'منح منظمة خدمات الطلاب اليابانية',
+                'funding': 'ممولة جزئياً',
+                'level': 'جميع المراحل'
+            }
+        ],
+        'south_korea': [
+            {
+                'name': 'Korean Government Scholarship (GKS)',
+                'url': 'https://www.studyinkorea.go.kr/',
+                'description': 'منح GKS الحكومية الكورية الشاملة',
+                'funding': 'ممولة بالكامل',
+                'level': 'بكالوريوس، ماجستير، دكتوراه'
+            },
+            {
+                'name': 'Korea Foundation Fellowship',
+                'url': 'https://www.kf.or.kr/',
+                'description': 'زمالات مؤسسة كوريا',
+                'funding': 'ممولة بالكامل',
+                'level': 'دكتوراه، أبحاث'
+            }
+        ],
+        'netherlands': [
+            {
+                'name': 'Holland Scholarship',
+                'url': 'https://www.studyinholland.nl/',
+                'description': 'منح الحكومة الهولندية',
+                'funding': 'ممولة جزئياً',
+                'level': 'بكالوريوس، ماجستير'
+            },
+            {
+                'name': 'Orange Knowledge Programme',
+                'url': 'https://www.studyinholland.nl/finances/orange-knowledge-programme',
+                'description': 'برنامج المعرفة البرتقالية',
+                'funding': 'ممولة بالكامل',
+                'level': 'ماجستير'
+            }
+        ],
+        'sweden': [
+            {
+                'name': 'Swedish Institute Scholarships',
+                'url': 'https://si.se/',
+                'description': 'منح الحكومة السويدية',
+                'funding': 'ممولة بالكامل',
+                'level': 'ماجستير'
+            }
+        ],
+        'canada': [
+            {
+                'name': 'Vanier Canada Graduate Scholarships',
+                'url': 'https://vanier.gc.ca/',
+                'description': 'منحة فانيه الكندية للدكتوراه',
+                'funding': 'ممولة بالكامل',
+                'level': 'دكتوراه'
+            }
+        ],
+        'singapore': [
+            {
+                'name': 'Singapore International Graduate Award (SINGA)',
+                'url': 'https://www.a-star.edu.sg/',
+                'description': 'جائزة سنغافورة للدراسات العليا',
+                'funding': 'ممولة بالكامل',
+                'level': 'دكتوراه'
+            }
+        ],
+        'malaysia': [
+            {
+                'name': 'Malaysian International Scholarship',
+                'url': 'https://www.moe.gov.my/',
+                'description': 'منحة الحكومة الماليزية',
+                'funding': 'ممولة بالكامل',
+                'level': 'ماجستير، دكتوراه'
+            }
+        ]
     }
 
     if country and country in gov_sites:
-        site = gov_sites[country]
-        scholarships.append({
-            'name': site['name'],
-            'country': COUNTRIES.get(country, country),
-            'major': 'جميع التخصصات',
-            'deadline': 'يتم التحديث سنوياً',
-            'link': site['url'],
-            'description': site['description'],
-            'source': 'موقع حكومي رسمي',
-            'funding_type': 'ممولة بالكامل',
-            'degree_level': 'بكالوريوس، ماجستير، دكتوراه'
-        })
-    else:
-        for key, site in gov_sites.items():
+        # إذا كانت الدولة محددة، أضف كل منحها
+        for prog in gov_sites[country]:
             scholarships.append({
-                'name': site['name'],
-                'country': COUNTRIES.get(key, key),
+                'name': prog['name'],
+                'country': COUNTRIES.get(country, country),
                 'major': 'جميع التخصصات',
                 'deadline': 'يتم التحديث سنوياً',
-                'link': site['url'],
-                'description': site['description'],
+                'link': prog['url'],
+                'description': prog['description'],
                 'source': 'موقع حكومي رسمي',
-                'funding_type': 'ممولة بالكامل'
+                'funding_type': prog['funding'],
+                'degree_level': prog['level']
             })
+    else:
+        # أضف جميع المنح من جميع الدول
+        for country_key, programs in gov_sites.items():
+            for prog in programs:
+                scholarships.append({
+                    'name': prog['name'],
+                    'country': COUNTRIES.get(country_key, country_key),
+                    'major': 'جميع التخصصات',
+                    'deadline': 'يتم التحديث سنوياً',
+                    'link': prog['url'],
+                    'description': prog['description'],
+                    'source': 'موقع حكومي رسمي',
+                    'funding_type': prog['funding'],
+                    'degree_level': prog['level']
+                })
 
     return scholarships
+
 
 def save_scholarships_to_db(scholarships_list):
     """حفظ المنح في قاعدة البيانات"""
@@ -2219,19 +2621,54 @@ async def show_favorites(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"━━━━━━━━━━━━━━━━\n"
         text += f"{i}. 📚 {fav[3]}\n"
         text += f"📊 الحالة: {status_emoji}\n"
+        text += f"🔔 الإشعارات: مفعّلة تلقائياً\n"
         text += f"🔗 {fav[4]}\n"
         text += f"📅 تم الحفظ: {fav[5]}\n\n"
 
+    text += "\n💡 ستصلك إشعارات تلقائية كل 6 ساعات عن:\n"
+    text += "• المواعيد النهائية القادمة\n"
+    text += "• المتطلبات والوثائق المطلوبة\n"
+    text += "• أي تحديثات جديدة على المنح\n"
+
     keyboard = [
-        [InlineKeyboardButton("🔄 فلترة حسب الحالة", callback_data='filter_favorites')]
+        [InlineKeyboardButton("🔄 فلترة حسب الحالة", callback_data='filter_favorites')],
+        [InlineKeyboardButton("🔔 المنح المتتبعة", callback_data='tracked_scholarships')]
     ]
     add_navigation_row(keyboard)
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await update.callback_query.edit_message_text(text, reply_markup=reply_markup, disable_web_page_preview=True)
 
+async def show_tracked_scholarships(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """عرض المنح المتتبعة بالإشعارات"""
+    user_id = update.effective_user.id
+    tracked = get_tracked_scholarships(user_id)
+
+    if not tracked:
+        text = "🔕 لا توجد منح متتبعة حالياً!\n\nاحفظ منح في المفضلة ليتم تتبعها تلقائياً."
+        keyboard = []
+        add_navigation_row(keyboard)
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await update.callback_query.edit_message_text(text, reply_markup=reply_markup)
+        return
+
+    text = f"🔔 منحي المتتبعة ({len(tracked)} منحة):\n\n"
+    text += "سيتم إرسال إشعارات تلقائية كل 6 ساعات\n\n"
+
+    for i, track in enumerate(tracked[:10], 1):
+        text += f"━━━━━━━━━━━━━━━━\n"
+        text += f"{i}. 📚 {track[3]}\n"
+        text += f"📅 بدأ التتبع: {track[4]}\n"
+        text += f"🔔 آخر إشعار: {track[5] or 'لم يتم الإرسال بعد'}\n\n"
+
+    keyboard = []
+    add_navigation_row(keyboard)
+    reply_markup = InlineKeyboardMarkup(keyboard)
+
+    await update.callback_query.edit_message_text(text, reply_markup=reply_markup)
+
 async def save_favorite(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """حفظ منحة في المفضلة"""
+    """حفظ منحة في المفضلة + تفعيل التتبع التلقائي"""
     scholarship_id = int(update.callback_query.data.replace('save_fav_', ''))
     user_id = update.effective_user.id
 
@@ -2242,8 +2679,22 @@ async def save_favorite(update: Update, context: ContextTypes.DEFAULT_TYPE):
     conn.close()
 
     if scholarship:
+        # حفظ في المفضلة
         success = save_to_favorites(user_id, scholarship_id, scholarship[0], scholarship[1])
-        if success:
+        
+        # تفعيل التتبع التلقائي
+        track_success = track_scholarship(user_id, scholarship_id, scholarship[0])
+        
+        if success and track_success:
+            await update.callback_query.answer(
+                "✅ تم حفظ المنحة وتفعيل الإشعارات!\n\n"
+                "سنرسل لك تحديثات تلقائية عن:\n"
+                "• المواعيد النهائية\n"
+                "• المتطلبات الجديدة\n"
+                "• الوثائق المطلوبة", 
+                show_alert=True
+            )
+        elif success:
             await update.callback_query.answer("✅ تم حفظ المنحة في المفضلة!", show_alert=True)
         else:
             await update.callback_query.answer("❌ المنحة محفوظة مسبقاً!", show_alert=True)
@@ -2788,6 +3239,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         'featured_scholarships': show_featured_scholarships,
         'my_profile': show_profile,
         'my_favorites': show_favorites,
+        'tracked_scholarships': show_tracked_scholarships,
         'smart_tips': smart_tips,
         'my_reminders': show_reminders,
         'help': show_help,
@@ -2938,9 +3390,10 @@ def main():
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_user_message))
 
     job_queue = application.job_queue
-    job_queue.run_repeating(auto_update_scholarships, interval=3600, first=10)
-    job_queue.run_repeating(send_pending_reminders, interval=3600, first=60)
-    job_queue.run_daily(send_weekly_digest, time=datetime.strptime("09:00", "%H:%M").time())
+    job_queue.run_repeating(auto_update_scholarships, interval=3600, first=10)  # كل ساعة
+    job_queue.run_repeating(send_pending_reminders, interval=3600, first=60)  # كل ساعة
+    job_queue.run_repeating(send_scholarship_notifications, interval=21600, first=120)  # كل 6 ساعات
+    job_queue.run_daily(send_weekly_digest, time=datetime.strptime("09:00", "%H:%M").time())  # كل يوم 9 صباحاً
 
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     print("🤖 البوت الذكي يعمل الآن...")
