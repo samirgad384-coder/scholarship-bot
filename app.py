@@ -2069,7 +2069,7 @@ from ai_assistant import (
     ai_compare_scholarships,
     ai_generate_application_checklist,
     ai_career_path_advice,
-    ai_smart_search_suggestions,
+    #ai_smart_search_suggestions,
     ai_interview_preparation,
     ai_scholarship_match_score,
     ai_quick_tip,
