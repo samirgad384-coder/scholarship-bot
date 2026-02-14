@@ -206,3 +206,5 @@ def get_ai_usage_stats() -> Dict:
 
     except:
         return {"total_queries": 0}
+async def ai_smart_search_suggestions(*args, **kwargs):
+    return "🔍 اقتراحات البحث الذكي قادمة قريبًا!"
