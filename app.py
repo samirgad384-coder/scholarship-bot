@@ -3,6 +3,7 @@ import sqlite3
 import requests
 from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
+from features.menu import get_main_menu
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -2090,21 +2091,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ''', (user.id, user.username, user.full_name, datetime.now().strftime('%Y-%m-%d')))
     conn.commit()
     conn.close()
-
-    keyboard = [
-        [InlineKeyboardButton("🔍 البحث الذكي عن المنح", callback_data='smart_search')],
-        [InlineKeyboardButton("🚀 البحث الموسع الشامل (100+ منحة)", callback_data='mega_search')],
-        [InlineKeyboardButton("🎯 بحث دقيق متقدم", callback_data='advanced_search')],
-        [InlineKeyboardButton("🌍 تصفح حسب الدولة", callback_data='browse_countries')],
-        [InlineKeyboardButton("📚 تصفح حسب التخصص", callback_data='browse_majors')],
-        [InlineKeyboardButton("⭐ المنح المميزة", callback_data='featured_scholarships')],
-        [InlineKeyboardButton("💾 منحي المفضلة", callback_data='my_favorites')],
-        [InlineKeyboardButton("🔔 نصائح ذكية", callback_data='smart_tips')],
-        [InlineKeyboardButton("📝 ملفي الشخصي", callback_data='my_profile')],
-        [InlineKeyboardButton("🔔 التنبيهات", callback_data='my_reminders')],
-        [InlineKeyboardButton("📞 تواصل مع المطور", callback_data='contact_developer')],
-        [InlineKeyboardButton("ℹ️ المساعدة", callback_data='help')]
-    ]
+    keyboard = get_main_menu()
 
     if is_admin(user):
         keyboard.insert(0, [InlineKeyboardButton("👑 لوحة تحكم الأدمن", callback_data='admin_panel')])
@@ -2161,21 +2148,9 @@ async def restart_bot(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def start_from_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """start من callback"""
-    user = update.effective_user
+    keyboard = get_main_menu()
 
-    keyboard = [
-        [InlineKeyboardButton("🔍 البحث الذكي عن المنح", callback_data='smart_search')],
-        [InlineKeyboardButton("🎯 بحث دقيق متقدم", callback_data='advanced_search')],
-        [InlineKeyboardButton("🌍 تصفح حسب الدولة", callback_data='browse_countries')],
-        [InlineKeyboardButton("📚 تصفح حسب التخصص", callback_data='browse_majors')],
-        [InlineKeyboardButton("⭐ المنح المميزة", callback_data='featured_scholarships')],
-        [InlineKeyboardButton("💾 منحي المفضلة", callback_data='my_favorites')],
-        [InlineKeyboardButton("🔔 نصائح ذكية", callback_data='smart_tips')],
-        [InlineKeyboardButton("📝 ملفي الشخصي", callback_data='my_profile')],
-        [InlineKeyboardButton("🔔 التنبيهات", callback_data='my_reminders')],
-        [InlineKeyboardButton("📞 تواصل مع المطور", callback_data='contact_developer')],
-        [InlineKeyboardButton("ℹ️ المساعدة", callback_data='help')]
-    ]
+    user = update.effective_user
 
     if is_admin(user):
         keyboard.insert(0, [InlineKeyboardButton("👑 لوحة تحكم الأدمن", callback_data='admin_panel')])
@@ -3379,8 +3354,14 @@ def main():
     logger.info(f"✅ تم تحديث {len(all_scholarships)} منحة")
 
     application = Application.builder().token(TOKEN).build()
+    from feature_loader import load_all_features
+    load_all_features(application)
+
+    from features.dream_search import register as register_dream
+    register_dream(application)
 
     application.post_init = setup_commands
+
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("restart", restart_bot))
@@ -3425,7 +3406,6 @@ def main():
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     logger.info("✅ البوت يعمل بنجاح")
 
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == '__main__':
     main()
