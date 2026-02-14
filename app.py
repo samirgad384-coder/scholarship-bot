@@ -16,6 +16,11 @@ from bs4 import BeautifulSoup
 import json
 import re
 import asyncio
+import sys
+import os
+os.environ["PYTHONIOENCODING"] = "utf-8"
+sys.stdout.reconfigure(encoding="utf-8")
+
 import logging
 
 # ============================================
@@ -3406,6 +3411,7 @@ def main():
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     logger.info("✅ البوت يعمل بنجاح")
 
+    application.run_polling()
 
 if __name__ == '__main__':
     main()
