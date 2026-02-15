@@ -15,7 +15,7 @@ MAIN_MENU = [
     [InlineKeyboardButton("📝 ملفي الشخصي", callback_data="my_profile")],
     [InlineKeyboardButton("🔔 التنبيهات", callback_data="my_reminders")],
     [InlineKeyboardButton("💎 Premium", callback_data="premium")],
-    [InlineKeyboardButton("📢 قنوات البوت", callback_data="channels")],
+    [InlineKeyboardButton("👥 قنوات البوت الاساسيه ", callback_data="community")],
     [InlineKeyboardButton("📞 تواصل مع المطور", callback_data="contact_developer")],
     [InlineKeyboardButton("ℹ️ المساعدة", callback_data="help")],
 ]
