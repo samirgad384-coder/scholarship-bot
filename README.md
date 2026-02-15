@@ -188,7 +188,7 @@ The platform follows a modular architecture:
 ## 1️⃣ Clone Repository
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/scholarship-bot.git
+git clone https://github.com/<your-username>/scholarship-bot.git
 cd scholarship-bot
 ```
 
@@ -204,7 +204,6 @@ Create a `.env` file in the project root:
 
 ```
 BOT_TOKEN=your_telegram_bot_token
-GROQ_API_KEY=your_groq_api_key
 ```
 
 ⚠️ Never share API keys publicly.
@@ -212,16 +211,32 @@ GROQ_API_KEY=your_groq_api_key
 ## 4️⃣ Run the Bot
 
 ```bash
-python scholarship_bot_ultimate.py
+python app.py
 ```
+
+## 5️⃣ Deploy on Railway (recommended settings)
+
+For Railway web deployments, set these environment variables:
+
+```
+BOT_TOKEN=your_telegram_bot_token
+WEBHOOK_MODE=webhook
+# Optional: set WEBHOOK_URL manually if you use a custom domain
+# WEBHOOK_URL=https://your-app.up.railway.app
+```
+
+Notes:
+* The bot now auto-detects `RAILWAY_PUBLIC_DOMAIN` when available.
+* If no public URL is found, it falls back to polling mode (best used in a Railway Worker service).
 
 ---
 
 # 📂 Project Structure
 
 ```
-scholarship_bot_ultimate.py   # Main bot application
-ai_assistant.py               # AI services module
+app.py                         # Main bot application
+feature_loader.py              # Auto-load feature modules
+features/                      # Optional feature modules
 requirements.txt              # Dependencies
 .env                          # Environment variables (not tracked)
 .gitignore                    # Git ignore rules

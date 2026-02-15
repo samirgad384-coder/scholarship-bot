@@ -30,10 +30,7 @@ import logging
 from dotenv import load_dotenv
 load_dotenv()
 
-TOKEN = os.getenv("BOT_TOKEN")
-
-if not TOKEN:
-    raise ValueError("BOT_TOKEN not set in environment variables")
+TOKEN = (os.getenv("BOT_TOKEN") or "").strip()
 
 # ⚙️ إعدادات الأدمن
 ADMIN_USERNAME = "ENG_GAD"
@@ -3308,6 +3305,37 @@ async def profile_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, reply_markup=reply_markup)
 
 def main():
+    if not TOKEN:
+        logger.critical("❌ BOT_TOKEN not set in environment variables")
+        raise RuntimeError("BOT_TOKEN not set in environment variables")
+
+    def normalize_public_url(url: str) -> str:
+        """Normalize domain/url value into https://host format without trailing slash."""
+        if not url:
+            return ""
+        normalized = url.strip().rstrip("/")
+        if not normalized.startswith(("http://", "https://")):
+            normalized = f"https://{normalized}"
+        return normalized
+
+    def get_webhook_base_url() -> str:
+        """Resolve webhook base URL from common cloud env vars."""
+        explicit_url = os.getenv("WEBHOOK_URL")
+        if explicit_url:
+            return normalize_public_url(explicit_url)
+
+        # Railway usually exposes a public domain for web services
+        railway_domain = os.getenv("RAILWAY_PUBLIC_DOMAIN")
+        if railway_domain:
+            return normalize_public_url(railway_domain)
+
+        # Optional fallback for other providers
+        render_url = os.getenv("RENDER_EXTERNAL_URL")
+        if render_url:
+            return normalize_public_url(render_url)
+
+        return ""
+
     print("🚀 جاري تشغيل البوت...")
     logger.info("🚀 بدء تشغيل البوت")
     
@@ -3411,27 +3439,30 @@ def main():
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     logger.info("✅ البوت يعمل بنجاح")
 
-    # Check if running on Railway or other cloud platform
-    WEBHOOK_MODE = os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("WEBHOOK_URL")
-    
-    if WEBHOOK_MODE:
-        # Webhook mode for Railway/Production
-        PORT = int(os.getenv("PORT", 8443))
-        WEBHOOK_URL = os.getenv("WEBHOOK_URL")
-        
-        if not WEBHOOK_URL:
-            logger.error("❌ WEBHOOK_URL not set! Please set it in Railway environment variables")
-            logger.error("Example: https://your-app.up.railway.app")
+    # Railway/production readiness: auto-resolve webhook URL when possible
+    running_on_cloud = bool(os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("RAILWAY_PUBLIC_DOMAIN"))
+    force_webhook = (os.getenv("WEBHOOK_MODE") or "").lower() == "webhook"
+    webhook_base_url = get_webhook_base_url()
+
+    if running_on_cloud or force_webhook or webhook_base_url:
+        port = int(os.getenv("PORT", 8443))
+
+        if not webhook_base_url:
+            logger.warning("⚠️ Cloud environment detected but no public webhook URL found.")
+            logger.warning("Set WEBHOOK_URL or ensure RAILWAY_PUBLIC_DOMAIN is available.")
+            logger.warning("Falling back to polling mode. Use a Worker service for polling in Railway.")
+            application.run_polling()
             return
-        
-        logger.info(f"🌐 Starting in WEBHOOK mode on port {PORT}")
-        logger.info(f"🔗 Webhook URL: {WEBHOOK_URL}")
-        
+
+        webhook_path = "webhook"
+        logger.info(f"🌐 Starting in WEBHOOK mode on port {port}")
+        logger.info(f"🔗 Webhook URL: {webhook_base_url}/{webhook_path}")
+
         application.run_webhook(
             listen="0.0.0.0",
-            port=PORT,
-            url_path=TOKEN,
-            webhook_url=f"{WEBHOOK_URL}/{TOKEN}"
+            port=port,
+            url_path=webhook_path,
+            webhook_url=f"{webhook_base_url}/{webhook_path}"
         )
     else:
         # Polling mode for local development
