@@ -3411,7 +3411,32 @@ def main():
     print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
     logger.info("✅ البوت يعمل بنجاح")
 
-    application.run_polling()
+    # Check if running on Railway or other cloud platform
+    WEBHOOK_MODE = os.getenv("RAILWAY_ENVIRONMENT") or os.getenv("WEBHOOK_URL")
+    
+    if WEBHOOK_MODE:
+        # Webhook mode for Railway/Production
+        PORT = int(os.getenv("PORT", 8443))
+        WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+        
+        if not WEBHOOK_URL:
+            logger.error("❌ WEBHOOK_URL not set! Please set it in Railway environment variables")
+            logger.error("Example: https://your-app.up.railway.app")
+            return
+        
+        logger.info(f"🌐 Starting in WEBHOOK mode on port {PORT}")
+        logger.info(f"🔗 Webhook URL: {WEBHOOK_URL}")
+        
+        application.run_webhook(
+            listen="0.0.0.0",
+            port=PORT,
+            url_path=TOKEN,
+            webhook_url=f"{WEBHOOK_URL}/{TOKEN}"
+        )
+    else:
+        # Polling mode for local development
+        logger.info("🔄 Starting in POLLING mode (local development)")
+        application.run_polling()
 
 if __name__ == '__main__':
     main()
