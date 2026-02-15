@@ -30,7 +30,7 @@ import logging
 from dotenv import load_dotenv
 load_dotenv()
 
-TOKEN = (os.getenv("BOT_TOKEN") or "").strip()
+TOKEN = (os.getenv("BOT_TOKEN") or os.getenv("TOKEN") or "").strip()
 
 # ⚙️ إعدادات الأدمن
 ADMIN_USERNAME = "ENG_GAD"
