@@ -2,6 +2,8 @@ import sqlite3
 from datetime import datetime
 from telegram import InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import CallbackQueryHandler, MessageHandler, filters
+import asyncio
+from features.official_scraper import get_scholarship_details, search_official_scholarships, OfficialSourcesScraper
 
 DB_NAME = "scholarship_bot.db"
 
@@ -274,6 +276,90 @@ async def save_rating(update, context):
 
 
 # ============================================
+# عرض التفاصيل الكاملة للمنح الرسمية
+# ============================================
+
+async def show_official_details(update, context):
+    query = update.callback_query
+    await query.answer()
+    
+    index = int(query.data.replace("show_official_", ""))
+    official_results = context.user_data.get('official_results', [])
+    
+    if not official_results or index >= len(official_results):
+        await query.edit_message_text("❌ عذراً، هذه المعلومات لم تعد متاحة")
+        return
+    
+    details = official_results[index]
+    
+    text = f"📋 <b>تفاصيل المنحة الكاملة</b>\n\n"
+    text += f"🎓 <b>{details['title']}</b>\n\n"
+    text += f"🌍 <b>الدولة:</b> {details['country']}\n"
+    text += f"💰 <b>نوع التمويل:</b> {details['funding_type']}\n\n"
+    
+    if details.get('description'):
+        text += f"📝 <b>الوصف:</b>\n{details['description']}\n\n"
+    
+    if details.get('majors'):
+        majors_text = ', '.join(details['majors'][:10])
+        text += f"📚 <b>التخصصات المتاحة:</b>\n{majors_text}\n\n"
+    
+    if details.get('deadlines') and details['deadlines'][0] != 'مواعيد غير محددة':
+        text += f"⏰ <b>المواعيد النهائية:</b>\n"
+        for deadline in details['deadlines'][:3]:
+            text += f"• {deadline}\n"
+        text += "\n"
+    
+    if details.get('eligibility') and details['eligibility'][0] != 'شروط عامة للتقديم':
+        text += f"✅ <b>شروط الأهلية:</b>\n"
+        for cond in details['eligibility'][:5]:
+            text += f"• {cond[:100]}...\n" if len(cond) > 100 else f"• {cond}\n"
+        text += "\n"
+    
+    if details.get('benefits') and details['benefits'][0] != 'تفاصيل التمويل متاحة على الموقع الرسمي':
+        text += f"💎 <b>الفوائد والتغطية:</b>\n"
+        for benefit in details['benefits'][:7]:
+            text += f"• {benefit[:100]}...\n" if len(benefit) > 100 else f"• {benefit}\n"
+        text += "\n"
+    
+    if details.get('requirements') and details['requirements'][0] != 'الوثائق المطلوبة مذكورة على الموقع الرسمي':
+        text += f"📄 <b>الوثائق المطلوبة:</b>\n"
+        for req in details['requirements'][:7]:
+            text += f"• {req[:100]}...\n" if len(req) > 100 else f"• {req}\n"
+        text += "\n"
+    
+    text += f"🔗 <b>رابط التقديم الرسمي:</b>\n{details['apply_link']}\n\n"
+    text += f"ℹ️ <b>المصدر:</b> موقع رسمي موثوق"
+    
+    keyboard = [
+        [InlineKeyboardButton("🔗 التقديم الآن", url=details['apply_link'])],
+        [InlineKeyboardButton("🔙 عودة للقائمة", callback_data="start")]
+    ]
+    
+    await query.edit_message_text(
+        text,
+        parse_mode='HTML',
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        disable_web_page_preview=False
+    )
+
+
+# ============================================
+# قائمة تقييم الدقة
+# ============================================
+
+async def show_rating_menu(update, context):
+    keyboard = [[InlineKeyboardButton(f"{i}/10 ⭐", callback_data=f"dream_rate_{i}")]
+                for i in range(1, 11)]
+    keyboard.append([InlineKeyboardButton("🔙 عودة", callback_data="start")])
+    
+    await update.callback_query.edit_message_text(
+        "📊 قيّم دقة النتائج:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+
+# ============================================
 # REGISTER FEATURE
 # ============================================
 
@@ -286,6 +372,14 @@ def register(application):
 
     application.add_handler(
         CallbackQueryHandler(save_rating, pattern="dream_rate_")
+    )
+
+    application.add_handler(
+        CallbackQueryHandler(show_official_details, pattern="show_official_")
+    )
+
+    application.add_handler(
+        CallbackQueryHandler(show_rating_menu, pattern="dream_rate_menu")
     )
 
     application.add_handler(
