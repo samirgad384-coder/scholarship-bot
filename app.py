@@ -37,6 +37,15 @@ ADMIN_USERNAME = "ENG_GAD"
 ADMIN_USER_ID = 6748814044
 ADMIN_LIST = ["ENG_GAD", "SS_GG_X1"]
 
+# 🆕 إعدادات Groq AI
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+USE_AI = bool(GROQ_API_KEY and GROQ_API_KEY.strip())
+
+# 💳 إعدادات الدفع
+STRIPE_SECRET_KEY = os.getenv("STRIPE_SECRET_KEY", "")
+PAYMOB_API_KEY = os.getenv("PAYMOB_API_KEY", "")
+USE_PAYMENTS = bool(STRIPE_SECRET_KEY or PAYMOB_API_KEY)
+
 # ============================================
 # 🆕 إعداد Logging
 # ============================================
@@ -272,6 +281,121 @@ def init_db():
             FOREIGN KEY (user_id) REFERENCES users(user_id),
             FOREIGN KEY (scholarship_id) REFERENCES scholarships(id),
             UNIQUE(user_id, scholarship_id)
+        )
+    ''')
+
+    # 🆕 جداول جديدة للنظام المتكامل
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS premium_users (
+            user_id INTEGER PRIMARY KEY,
+            subscription_type TEXT DEFAULT 'premium',
+            start_date TEXT,
+            end_date TEXT,
+            payment_method TEXT,
+            auto_renew INTEGER DEFAULT 1,
+            created_at TEXT
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS ai_recommendations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            recommendation_type TEXT,
+            content TEXT,
+            confidence_score REAL,
+            created_at TEXT,
+            is_accepted INTEGER DEFAULT 0,
+            FOREIGN KEY (user_id) REFERENCES users(user_id)
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS application_plans (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            scholarship_id INTEGER,
+            plan_data TEXT,
+            progress INTEGER DEFAULT 0,
+            current_step TEXT,
+            created_at TEXT,
+            updated_at TEXT,
+            FOREIGN KEY (user_id) REFERENCES users(user_id)
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS daily_tips (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            tip_text TEXT,
+            tip_category TEXT,
+            difficulty_level TEXT,
+            created_at TEXT
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS user_tip_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            tip_id INTEGER,
+            viewed_at TEXT,
+            is_helpful INTEGER DEFAULT 0,
+            FOREIGN KEY (user_id) REFERENCES users(user_id),
+            FOREIGN KEY (tip_id) REFERENCES daily_tips(id)
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS ranking (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            rank_score INTEGER DEFAULT 0,
+            rank_position INTEGER,
+            badges TEXT,
+            achievements TEXT,
+            last_updated TEXT,
+            FOREIGN KEY (user_id) REFERENCES users(user_id)
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS user_statistics (
+            user_id INTEGER PRIMARY KEY,
+            total_searches INTEGER DEFAULT 0,
+            total_applications INTEGER DEFAULT 0,
+            successful_applications INTEGER DEFAULT 0,
+            total_logins INTEGER DEFAULT 0,
+            features_used TEXT,
+            time_spent_minutes INTEGER DEFAULT 0,
+            last_active TEXT,
+            FOREIGN KEY (user_id) REFERENCES users(user_id)
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS news (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT,
+            content TEXT,
+            category TEXT,
+            source TEXT,
+            published_at TEXT,
+            created_at TEXT
+        )
+    ''')
+
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS payments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            amount REAL,
+            currency TEXT,
+            payment_method TEXT,
+            transaction_id TEXT,
+            status TEXT,
+            created_at TEXT,
+            FOREIGN KEY (user_id) REFERENCES users(user_id)
         )
     ''')
 
