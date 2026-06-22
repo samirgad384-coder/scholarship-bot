@@ -2,3 +2,7 @@ python-telegram-bot[job-queue]==21.7
 python-dotenv
 requests
 beautifulsoup4
+lxml
+html5lib
+selenium
+webdriver-manager
